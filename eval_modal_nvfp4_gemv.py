@@ -61,45 +61,32 @@ def evaluate_kernel(
     def ceil_div(a, b):
         return (a + b - 1) // b
 
-    # fp4 e2m1 lookup table: 4-bit index -> float32 value
-    # bit3=sign, bits[2:1]=exponent, bit0=mantissa
-    _FP4_LUT_VALUES = [
-        0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,     # positive (sign=0)
-        0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,  # negative (sign=1)
-    ]
+    def to_blocked(input_matrix):
+        """Convert [rows, cols] scale tensor to the blocked layout expected by _scaled_mm."""
+        rows, cols = input_matrix.shape
+        n_row_blocks = ceil_div(rows, 128)
+        n_col_blocks = ceil_div(cols, 4)
+        blocks = input_matrix.view(n_row_blocks, 128, n_col_blocks, 4).permute(0, 2, 1, 3)
+        rearranged = blocks.reshape(-1, 4, 32, 4).transpose(1, 2).reshape(-1, 32, 16)
+        return rearranged.flatten()
 
     def ref_kernel(data):
-        # data: (a_packed, b_packed, sfa, sfb, sfa_permuted, sfb_permuted, c)
-        # a_packed: [m, k//2, l]  fp4x2 (2 fp4 values per byte, lo nibble = lower k)
-        # b_packed: [128, k//2, l] fp4x2 (only row 0 is the actual b vector)
-        # sfa:      [m, k//16, l] fp8   (one scale per 16 k-elements)
-        # sfb:      [128, k//16, l] fp8  (row 0 is the b scale vector)
-        # c:        [m, 1, l] fp16       (output, written in place)
-        a_packed, b_packed, sfa, sfb, _, _, c = data
-        a_u8 = a_packed.view(torch.uint8)  # [m, k//2, l]
-        b_u8 = b_packed.view(torch.uint8)  # [128, k//2, l]
-        m, k_half, l = a_u8.shape
-        k = k_half * 2
-
-        lut = torch.tensor(_FP4_LUT_VALUES, dtype=torch.float32, device=a_u8.device)
-
-        # Unpack fp4: lo nibble = even k-index, hi nibble = odd k-index
-        a_f32 = torch.empty(m, k, l, dtype=torch.float32, device=a_u8.device)
-        a_f32[:, 0::2, :] = lut[(a_u8 & 0xF).long()]
-        a_f32[:, 1::2, :] = lut[((a_u8 >> 4) & 0xF).long()]
-
-        b_f32 = torch.empty(1, k, l, dtype=torch.float32, device=b_u8.device)
-        b_f32[:, 0::2, :] = lut[(b_u8[0:1] & 0xF).long()]
-        b_f32[:, 1::2, :] = lut[((b_u8[0:1] >> 4) & 0xF).long()]
-
-        # fp8 scale factors -> float32, broadcast over the 16 k-elements each covers
-        sfa_f32 = sfa.float().repeat_interleave(16, dim=1)      # [m, k, l]
-        sfb_f32 = sfb[0:1].float().repeat_interleave(16, dim=1)  # [1, k, l]
-
-        # GEMV: c[m, 0, l] = sum_k( a[m,k,l]*sfa[m,k//16,l] * b[0,k,l]*sfb[0,k//16,l] )
-        c_f32 = (a_f32 * sfa_f32 * b_f32 * sfb_f32).sum(dim=1, keepdim=True)  # [m, 1, l]
-        c.copy_(c_f32.to(c.dtype))
-        return c
+        # Uses torch._scaled_mm with to_blocked scales — matches GPU_MODE reference.
+        a_ref, b_ref, sfa_ref, sfb_ref, _, _, c_ref = data
+        _, _, l = c_ref.shape
+        for l_idx in range(l):
+            scale_a = to_blocked(sfa_ref[:, :, l_idx])
+            scale_b = to_blocked(sfb_ref[:, :, l_idx])
+            res = torch._scaled_mm(
+                a_ref[:, :, l_idx],
+                b_ref[:, :, l_idx].transpose(0, 1),
+                scale_a,
+                scale_b,
+                bias=None,
+                out_dtype=torch.float16,
+            )
+            c_ref[:, 0, l_idx] = res[:, 0]
+        return c_ref
 
     def generate_input(m, k, l, seed):
         torch.manual_seed(seed)
@@ -305,7 +292,7 @@ def evaluate_kernel(
             custom_out = custom_kernel(generate_input(m, k, l, case["seed"]))
             torch.cuda.synchronize()
 
-            if torch.allclose(ref_out.float(), custom_out.float(), atol=1.0, rtol=1e-2):
+            if torch.allclose(ref_out.float(), custom_out.float(), atol=1e-3, rtol=1e-3):
                 detail["passed"] = True
                 result["tests_passed"] += 1
             else:
