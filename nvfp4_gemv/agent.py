@@ -122,7 +122,7 @@ def build_agent():
         model=model,
         tools=[log_experiment, get_experiment_history],
         system_prompt=system_prompt,
-        backend=LocalShellBackend(root_dir=PROJECT_DIR, virtual_mode=True, env=env),
+        backend=LocalShellBackend(root_dir=PROJECT_DIR, virtual_mode=False, env=env),
         checkpointer=checkpointer,
     )
     return agent, checkpointer

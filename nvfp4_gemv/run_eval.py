@@ -104,12 +104,39 @@ def main():
         print(f"Error: {args.submission} not found")
         sys.exit(1)
 
-    # Prepend a cache-clear so Modal warm containers never serve stale
-    # torch_extensions build artifacts from a previous failed compile.
+    # Prepend a cache-clear, CUDA context reset, and load_inline patch so Modal
+    # containers never serve stale artifacts, don't carry dirty CUDA contexts
+    # from a previous failed kernel, and every kernel gets a fresh isolated
+    # build directory regardless of whether it sets build_directory itself.
     _CACHE_CLEAR = (
         "import shutil as _shutil, os as _os\n"
         "_shutil.rmtree(_os.path.expanduser('~/.cache/torch_extensions'), ignore_errors=True)\n"
         "del _shutil, _os\n"
+        "try:\n"
+        "    import torch as _t\n"
+        "    if _t.cuda.is_available():\n"
+        "        _t.cuda.synchronize()\n"
+        "    del _t\n"
+        "except Exception:\n"
+        "    try:\n"
+        "        import ctypes as _ct, torch.cuda as _tc\n"
+        "        for _lib in ('libcudart.so', 'libcudart.so.12', 'libcudart.so.11.0'):\n"
+        "            try:\n"
+        "                _ct.CDLL(_lib).cudaDeviceReset(); break\n"
+        "            except OSError:\n"
+        "                continue\n"
+        "        _tc._initialized = False\n"
+        "        del _ct, _tc\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "import torch.utils.cpp_extension as _cpp_ext\n"
+        "_orig_load_inline = _cpp_ext.load_inline\n"
+        "def _load_inline_patched(*_a, build_directory=None, **_kw):\n"
+        "    if build_directory is None:\n"
+        "        import tempfile as _t; build_directory = _t.mkdtemp(prefix='gemv_build_')\n"
+        "    return _orig_load_inline(*_a, build_directory=build_directory, **_kw)\n"
+        "_cpp_ext.load_inline = _load_inline_patched\n"
+        "del _cpp_ext\n"
     )
     kernel_code = _CACHE_CLEAR + kernel_code
 
