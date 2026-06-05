@@ -1,0 +1,28 @@
+experiment	agent_iteration	commit	time_us	status	description
+1	0	HEAD	41.80	keep	Baseline 'baseline37' — initial benchmark before any agent changes
+2	1	HEAD	65.20	discard	Reduce block size from (32,32) to (32,16) — 16 warps per block instead of 32 — to lower register pre
+3	1	HEAD	41.50	keep	Replace complex inline PTX multiply_and_accumulate (f16x2 accumulators, 50+ registers) with simpler 
+4	2	HEAD	42.40	discard	Have each warp process 2 rows simultaneously (row0 and row1), reading the same B/SFB from shared mem
+5	3	HEAD	64.40	discard	Switch dot_fp4x2_word from f16x2 accumulation (__hfma2) to float32 accumulation using __half22float2
+6	4	HEAD	41.70	discard	Pre-convert SFB from fp8x2 to __half2 in shared memory during load phase, eliminating per-warp __nv_
+7	5	HEAD	41.50	discard	Add explicit __ldg() for A and SFA inner-loop loads to use read-only texture cache path, instead of 
+8	6	HEAD	41.40	keep	Replace dot_fp4x2_word C++ byte-extraction loop with pure PTX dot_fp4x2_word_ptx that unpacks all 4 
+9	7	HEAD	62.90	discard	Merge all 4 dot_fp4x2_word_ptx calls into a single monolithic PTX block handling all 32 fp4 elements
+10	8	HEAD	41.40	discard	Process 2 K-chunks per loop iteration (stride 64 instead of 32) to improve ILP and allow the compile
+11	9	HEAD	41.70	discard	Add --maxrregcount=64 compiler flag to force lower register count per thread, allowing more blocks/w
+12	10	HEAD	41.10	keep	Add __launch_bounds__(1024, 2) to gemv_kernel — tells PTXAS to optimize register allocation for 2 bl
+13	11	HEAD	41.30	discard	Increase __launch_bounds__ from (1024, 2) to (1024, 3) — more aggressive register reduction for 3 bl
+14	12	HEAD	41.10	discard	K-split with K_SPLIT=2: double the number of blocks (M/32 × L × 2) for better SM wave utilization, u
+15	13	HEAD	62.00	discard	Use torch._scaled_mm (tensor cores) for L>=4 cases instead of custom CUDA kernel, routing L=1 to CUD
+16	14	HEAD	63.10	discard	Stage all 32 rows of SFA into shared memory (32×K/16 bytes = 32KB for K=16384) to eliminate SFA glob
+17	15	HEAD	66.10	discard	Use torch._scaled_mm with pre-permuted GPU-side scale factors (sfa_permuted/sfb_permuted already in 
+18	16	HEAD	42.20	discard	Pre-convert B from fp4x2 to f16x2 in shared memory during load phase, eliminating B fp4→f16 conversi
+19	17	HEAD	57.70	discard	Change dot_fp4x2_word_ptx from serial FMA chain (p0→p1→p2→p3) to tree-reduction (2 independent mul p
+20	18	HEAD	57.60	discard	Add --use_fast_math compiler flag to allow approximate math operations (faster float/half conversion
+21	19	HEAD	58.00	discard	Force fresh compilation of current kernel (serial FMA chain, __launch_bounds__(1024,2)) by changing 
+22	20	HEAD	55.40	discard	Critical discovery: was editing wrong file (/submission.py vs /workspace/.../submission.py). Real ba
+23	21	HEAD	46.00	discard	Now editing correct file. Change WPB from 4 to 8 (8 warps/block = 256 threads) in baseline37 kernel,
+24	22	HEAD	44.00	discard	Use per-L dispatch: WPB=4,RPW=4 for L>=8 (baseline config), WPB=8,RPW=4 for L<8 (larger block for sm
+25	23	HEAD	42.00	discard	Remove --use_fast_math and add -Xptxas=-O3 to compiler flags on the real baseline37 kernel (WPB=4, R
+26	24	HEAD	41.70	discard	Restore --use_fast_math and add -Xptxas=--maxrregcount=32 to force 32 register cap per thread, allow
+27	25	HEAD	41.60	keep	Change -Xptxas=--maxrregcount from 32 to 40 — gentler register cap that avoids spilling on L=1 case 
