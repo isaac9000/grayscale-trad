@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-CLI wrapper that submits a kernel to the Modal B200 evaluator and writes
-results.json in markdown format the agent can parse.
+CLI wrapper that submits a grayscale kernel to the deployed Modal A100 evaluator
+and writes results.json in markdown format the agent can parse.
+
+Deploy the evaluator once before running:
+    uv run modal deploy eval_modal_grayscale_kernel.py
 
 Usage:
     python run_eval.py submission.py -o results.json
@@ -15,29 +18,26 @@ import threading
 
 import modal
 
-# Speed-of-light targets (µs) at 1.5 GHz on B200
-SOL = {
-    (7168, 16384, 1): 8.622,
-    (4096, 7168,  8): 17.275,
-    (7168, 2048,  4): 4.317,
-}
+BENCHMARK_SIZES = [512, 1024, 2048, 4096, 8192, 16384]
+TEST_SIZES = [512, 1024, 2048]
 
 
 def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
-    gpu = res.get("gpu_name", "NVIDIA B200")
+    gpu = res.get("gpu_name", "NVIDIA A100")
     torch_ver = res.get("torch_version", "unknown")
     plat = res.get("platform", "unknown")
 
     if res["success"]:
-        status_line = "**B200 on Modal ✅ success**"
+        status_line = "**A100 on Modal ✅ success**"
     else:
-        status_line = "**B200 on Modal ❌ failure**"
+        status_line = "**A100 on Modal ❌ failure**"
 
     lines = [status_line]
 
     if res["success"]:
         lines.append("> ✅ Testing successful")
-        lines.append("> ✅ Benchmarking successful")
+        if mode == "leaderboard":
+            lines.append("> ✅ Benchmarking successful")
     elif res.get("tests_passed", 0) == res.get("tests_total", 1):
         lines.append("> ✅ Testing successful")
         lines.append("> ❌ Benchmarking failed")
@@ -60,7 +60,7 @@ def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
     lines.append("```")
     for td in res.get("test_details", []):
         icon = "✅" if td["passed"] else "❌"
-        lines.append(f"{icon} m={td['m']} k={td['k']} l={td['l']}")
+        lines.append(f"{icon} size={td['size']}")
         if td.get("error"):
             lines.append(f"   ERROR: {td['error']}")
     lines.append("```")
@@ -73,12 +73,9 @@ def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
         geomean = bm["geomean_us"]
         lines += ["", "## Benchmarks:", "```", f"Geometric mean: ⏱ {geomean} µs", ""]
         for bd in res.get("benchmark_details", []):
-            m, k, l = bd["m"], bd["k"], bd["l"]
-            sol_us = SOL.get((m, k, l), None)
-            sol_str = f" (SOL: {sol_us} µs, ratio: {bd['mean_us']/sol_us:.3f}x)" if sol_us else ""
             lines.append(
-                f"  m={m} k={k} l={l}: ⏱ {bd['mean_us']} ± {bd['stderr_us']} µs"
-                f"  ⚡ {bd['min_us']} µs  🐌 {bd['max_us']} µs{sol_str}"
+                f"  size={bd['size']}: ⏱ {bd['mean_us']} ± {bd['stderr_us']} µs"
+                f"  ⚡ {bd['min_us']} µs  🐌 {bd['max_us']} µs"
             )
         lines.append("```")
 
@@ -86,7 +83,7 @@ def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate an nvfp4_gemv kernel on Modal B200")
+    parser = argparse.ArgumentParser(description="Evaluate a grayscale kernel on Modal A100")
     parser.add_argument("submission", help="Path to submission.py")
     parser.add_argument("-o", "--output", default="results.json")
     parser.add_argument(
@@ -104,47 +101,11 @@ def main():
         print(f"Error: {args.submission} not found")
         sys.exit(1)
 
-    # Prepend a cache-clear, CUDA context reset, and load_inline patch so Modal
-    # containers never serve stale artifacts, don't carry dirty CUDA contexts
-    # from a previous failed kernel, and every kernel gets a fresh isolated
-    # build directory regardless of whether it sets build_directory itself.
-    _CACHE_CLEAR = (
-        "import shutil as _shutil, os as _os\n"
-        "_shutil.rmtree(_os.path.expanduser('~/.cache/torch_extensions'), ignore_errors=True)\n"
-        "del _shutil, _os\n"
-        "try:\n"
-        "    import torch as _t\n"
-        "    if _t.cuda.is_available():\n"
-        "        _t.cuda.synchronize()\n"
-        "    del _t\n"
-        "except Exception:\n"
-        "    try:\n"
-        "        import ctypes as _ct, torch.cuda as _tc\n"
-        "        for _lib in ('libcudart.so', 'libcudart.so.12', 'libcudart.so.11.0'):\n"
-        "            try:\n"
-        "                _ct.CDLL(_lib).cudaDeviceReset(); break\n"
-        "            except OSError:\n"
-        "                continue\n"
-        "        _tc._initialized = False\n"
-        "        del _ct, _tc\n"
-        "    except Exception:\n"
-        "        pass\n"
-        "import torch.utils.cpp_extension as _cpp_ext\n"
-        "_orig_load_inline = _cpp_ext.load_inline\n"
-        "def _load_inline_patched(*_a, build_directory=None, **_kw):\n"
-        "    if build_directory is None:\n"
-        "        import tempfile as _t; build_directory = _t.mkdtemp(prefix='gemv_build_')\n"
-        "    return _orig_load_inline(*_a, build_directory=build_directory, **_kw)\n"
-        "_cpp_ext.load_inline = _load_inline_patched\n"
-        "del _cpp_ext\n"
-    )
-    kernel_code = _CACHE_CLEAR + kernel_code
+    print(f"Submitting {args.submission} to Modal A100 ({args.mode} mode)...")
 
-    print(f"Submitting {args.submission} to Modal B200 ({args.mode} mode)...")
+    evaluate_kernel = modal.Function.lookup("grayscale-kernel-eval", "evaluate_kernel")
 
-    evaluate_kernel = modal.Function.from_name("cuda-kernel-eval-nvfp4-gemv", "evaluate_kernel")
-
-    MODAL_TIMEOUT = 300
+    MODAL_TIMEOUT = 360
     result_holder = [None]
     error_holder = [None]
 
