@@ -19,7 +19,7 @@ If the run is a new best, log it with `status="keep"`.
 
 ## Environment
 
-- **Target GPU:** A100 (Modal cloud)
+- **Target GPU:** H100 (Modal cloud)
 - **Submission file:** `submission.py` — this is the ONLY file you edit
 - **Submission command:** `python run_eval.py submission.py -o results.json`
 - **Quick correctness check:** `python run_eval.py submission.py -o results.json --mode test`
@@ -68,7 +68,7 @@ The ranking criterion is the **geometric mean** of the mean latency across all 4
 ### Speed-of-Light Intuition
 
 This is a memory-bandwidth-bound operation: for each pixel, 3 floats are read and 1 float is written.
-- A100 peak memory bandwidth: ~2 TB/s
+- H100 peak memory bandwidth: ~3.35 TB/s
 - For size=4096: data = 4096×4096×3×4 bytes = 201 MB in + 67 MB out ≈ 268 MB total
 - Theoretical minimum at 2 TB/s ≈ 0.134 ms = 134 µs
 

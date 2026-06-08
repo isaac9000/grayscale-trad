@@ -1,6 +1,6 @@
 # Grayscale Autoresearch
 
-An autonomous agent that iteratively optimizes a CUDA kernel for RGB-to-grayscale conversion on NVIDIA A100. Each iteration the agent makes exactly one change to `submission.py`, evaluates it on an A100 via Modal, logs the result, and stops. The outer loop drives the next iteration.
+An autonomous agent that iteratively optimizes a CUDA kernel for RGB-to-grayscale conversion on NVIDIA H100. Each iteration the agent makes exactly one change to `submission.py`, evaluates it on an H100 via Modal, logs the result, and stops. The outer loop drives the next iteration.
 
 ## Task
 
@@ -17,18 +17,25 @@ Y = 0.2989 R + 0.5870 G + 0.1140 B
 | input | `H × W × 3` | `float32` |
 | output | `H × W` | `float32` |
 
-**Benchmark shapes:**
+**Test cases (correctness):**
 
-| Size | Image |
+| Size | Seed |
 |---|---|
-| 512 | 512 × 512 × 3 |
-| 1024 | 1024 × 1024 × 3 |
-| 2048 | 2048 × 2048 × 3 |
-| 4096 | 4096 × 4096 × 3 |
-| 8192 | 8192 × 8192 × 3 |
-| 16384 | 16384 × 16384 × 3 |
+| 256 | 42 |
+| 512 | 123 |
+| 1024 | 456 |
+| 2048 | 789 |
 
-Ranked by geometric mean latency across all six shapes (lower is better).
+**Benchmark cases (timing):**
+
+| Size | Image | Seed |
+|---|---|---|
+| 1024 | 1024 × 1024 × 3 | 1001 |
+| 2048 | 2048 × 2048 × 3 | 1002 |
+| 4096 | 4096 × 4096 × 3 | 1003 |
+| 8192 | 8192 × 8192 × 3 | 1004 |
+
+Ranked by geometric mean latency across all four benchmark sizes (lower is better). Score = `3000 / geomean_us` (higher is better). Timing uses adaptive iteration: stops when `stderr/mean < 0.1%`, after 10 s per case, or 120 s wall time.
 
 ## Setup
 
@@ -38,7 +45,7 @@ uv sync
 # Configure Modal credentials
 uv run modal token set --token-id <token-id> --token-secret <token-secret>
 
-# Deploy the A100 evaluator (once, before any agent runs)
+# Deploy the H100 evaluator (once, before any agent runs)
 uv run modal deploy eval_modal_grayscale_kernel.py
 ```
 
@@ -73,7 +80,7 @@ uv run python run_eval.py submission.py -o results.json --mode test
 ## Structure
 
 ```
-eval_modal_grayscale_kernel.py  — deployable Modal A100 evaluator
+eval_modal_grayscale_kernel.py  — deployable Modal H100 evaluator
 grayscale_kernel/
 ├── agent.py        — agentic loop (LangChain + DeepAgents)
 ├── program.md      — system prompt: task spec, constraints, optimization hints
