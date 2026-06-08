@@ -103,7 +103,7 @@ def main():
 
     print(f"Submitting {args.submission} to Modal A100 ({args.mode} mode)...")
 
-    evaluate_kernel = modal.Function.lookup("grayscale-kernel-eval", "evaluate_kernel")
+    evaluate_kernel = modal.Function.from_name("grayscale-kernel-eval", "evaluate_kernel")
 
     MODAL_TIMEOUT = 360
     result_holder = [None]

@@ -28,26 +28,39 @@ def evaluate_kernel(kernel_code: str, warmup_iters: int = 5, eval_iters: int = 2
     import json as _json
     import math
     import traceback
-    import types
 
     import torch
 
     def ref_kernel(data):
-        weights = torch.tensor([0.2989, 0.5870, 0.1140], device=data.device, dtype=data.dtype)
-        return torch.sum(data * weights, dim=-1)
+        rgb, output = data
+        weights = torch.tensor([0.2989, 0.5870, 0.1140], device=rgb.device, dtype=rgb.dtype)
+        output.copy_(torch.sum(rgb * weights, dim=-1))
+        return output
 
     def generate_input(size: int, seed: int):
         gen = torch.Generator(device="cuda")
         gen.manual_seed(seed)
-        return torch.rand(size, size, 3, device="cuda", dtype=torch.float32, generator=gen).contiguous()
+        rgb = torch.rand(size, size, 3, device="cuda", dtype=torch.float32, generator=gen).contiguous()
+        output = torch.empty(size, size, device="cuda", dtype=torch.float32)
+        return (rgb, output)
 
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unknown"
     torch_ver = torch.__version__
 
-    module = types.ModuleType("submission")
-    module.__dict__["__builtins__"] = __builtins__
+    # Write to a real file so Triton's inspect.getsourcelines() can find the source.
+    import importlib.util
+    import tempfile
+    import os as _os
+
+    tmp_dir = tempfile.mkdtemp(prefix="submission_")
+    tmp_path = _os.path.join(tmp_dir, "submission.py")
+    with open(tmp_path, "w") as f:
+        f.write(kernel_code)
+
     try:
-        exec(kernel_code, module.__dict__)
+        spec = importlib.util.spec_from_file_location("submission", tmp_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
     except Exception:
         return _json.dumps({
             "success": False,
@@ -77,10 +90,9 @@ def evaluate_kernel(kernel_code: str, warmup_iters: int = 5, eval_iters: int = 2
     test_details = []
     tests_passed = 0
     for size in TEST_SIZES:
-        data = generate_input(size, seed=42)
         try:
-            expected = ref_kernel(data)
-            actual = custom_kernel(data)
+            expected = ref_kernel(generate_input(size, seed=42)).clone()
+            actual = custom_kernel(generate_input(size, seed=42))
             torch.cuda.synchronize()
             if actual.shape != expected.shape:
                 test_details.append({
@@ -124,6 +136,12 @@ def evaluate_kernel(kernel_code: str, warmup_iters: int = 5, eval_iters: int = 2
             "platform": "modal-a100",
         })
 
+    def clear_l2_cache():
+        # Flush A100's 40MB L2 cache by writing a 256MB buffer — matches GPUMODE methodology.
+        dummy = torch.empty((32, 1024, 1024), dtype=torch.int64, device="cuda")
+        dummy.fill_(42)
+        del dummy
+
     # Benchmarks
     benchmark_details = []
     times_us = []
@@ -131,11 +149,13 @@ def evaluate_kernel(kernel_code: str, warmup_iters: int = 5, eval_iters: int = 2
         data = generate_input(size, seed=0)
         try:
             for _ in range(warmup_iters):
+                clear_l2_cache()
                 custom_kernel(data)
             torch.cuda.synchronize()
 
             iter_times = []
             for _ in range(eval_iters):
+                clear_l2_cache()
                 start = torch.cuda.Event(enable_timing=True)
                 end = torch.cuda.Event(enable_timing=True)
                 start.record()

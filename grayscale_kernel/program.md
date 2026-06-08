@@ -29,16 +29,20 @@ If the run is a new best, log it with `status="keep"`.
 
 Implement the fastest possible kernel for converting a square RGB image to grayscale.
 
-**Input:** RGB tensor of shape `(H, W, 3)` with values in `[0, 1]`, dtype `float32`, contiguous, on CUDA.
-
-**Output:** Grayscale tensor of shape `(H, W)` with values in `[0, 1]`, dtype `float32`.
-
 **Formula:** `Y = 0.2989 * R + 0.5870 * G + 0.1140 * B`
 
-The submission must define:
+`custom_kernel` receives a tuple `(rgb, output)`:
+
+- `rgb` — `(H, W, 3)` float32, values in `[0, 1]`, contiguous, on CUDA
+- `output` — `(H, W)` float32, pre-allocated output buffer on CUDA
+
+The kernel must write results into `output` and return it:
+
 ```python
-def custom_kernel(data: torch.Tensor) -> torch.Tensor:
+def custom_kernel(data) -> torch.Tensor:
+    rgb, output = data
     ...
+    return output
 ```
 
 ### Benchmark Shapes
@@ -65,22 +69,13 @@ A great kernel should approach the bandwidth limit by maximizing memory coalesci
 
 ## submission.py Format
 
-The file must define `custom_kernel(data: torch.Tensor) -> torch.Tensor`.
+The file must define `custom_kernel(data) -> torch.Tensor` where `data = (rgb, output)`.
 
 You can use:
 - **Triton kernels** — `import triton; import triton.language as tl`
 - **Raw CUDA** via `torch.utils.cpp_extension.load_inline`
 - **PyTorch built-ins** — e.g., `torch.einsum`, tensor slicing, `@`
 - Any approach that runs on CUDA
-
-## Optimization Strategies (try in roughly this order)
-
-1. **Baseline:** `torch.sum(data * weights, dim=-1)` — measures the starting point
-2. **`torch.einsum('hwc,c->hw', data, weights)`** — may fuse better
-3. **Triton kernel** — explicit vectorized loads, process multiple pixels per thread, tune block size
-4. **Half-precision computation** — convert to fp16 for MACs, convert output back to fp32
-5. **Vectorized loads** — load float4 (128-bit) chunks at a time in Triton/CUDA
-6. **Tune block/grid sizes** — experiment with 128, 256, 512, 1024 threads per block
 
 ## Using Experiment History
 
