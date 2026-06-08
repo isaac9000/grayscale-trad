@@ -99,7 +99,7 @@ def read_results_summary() -> str:
 
 def build_agent():
     load_dotenv()
-    model_name = os.environ.get("AUTORESEARCH_MODEL", "claude-opus-4-7")
+    model_name = os.environ.get("AUTORESEARCH_MODEL", "claude-sonnet-4-6")
     system_prompt = load_system_prompt()
     checkpointer = MemorySaver()
 
@@ -213,7 +213,7 @@ def main():
 
     load_dotenv()
 
-    model_name = os.environ.get("AUTORESEARCH_MODEL", "claude-opus-4-7")
+    model_name = os.environ.get("AUTORESEARCH_MODEL", "claude-sonnet-4-6")
     if model_name.startswith("claude-"):
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print("Error: ANTHROPIC_API_KEY not set")
