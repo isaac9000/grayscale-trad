@@ -269,5 +269,5 @@ def evaluate_kernel(kernel_code: str, mode: str = "leaderboard") -> str:
         "benchmark_details": benchmark_details,
         "gpu_name": gpu_name,
         "torch_version": torch_ver,
-        "platform": "modal-a100",
+        "platform": "modal-h100",
     })

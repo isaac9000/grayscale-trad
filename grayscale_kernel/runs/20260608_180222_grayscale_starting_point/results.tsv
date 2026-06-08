@@ -1,0 +1,27 @@
+experiment	agent_iteration	commit	time_us	status	description
+1	0	HEAD	90.13	keep	Baseline 'starting_point' — initial benchmark before any agent changes
+2	1	HEAD	90.15	discard	Increase pixels-per-thread from 4 to 8 (two float4 outputs per thread) with cache-streaming stores, 
+3	2	HEAD	96.83	discard	Use cache-streaming (ld.global.cs) for both reads AND writes, 4 pixels/thread, 256 threads/block. Hy
+4	3	HEAD	89.24	keep	Switch to pure PyTorch mv (cuBLAS GEMV): reshape rgb to (H*W, 3), multiply by [0.2989, 0.5870, 0.114
+5	4	HEAD	90.00	discard	Use torch.mv with out= parameter pointing to flattened output buffer to eliminate intermediate alloc
+6	5	HEAD	90.01	discard	Use torch.einsum('hwc,c->hw', out=output) to fuse weighted channel sum in a single pass, avoiding re
+7	6	HEAD	90.72	discard	Use torch.mm with weight as (3,1) matrix — triggers GEMM path (N×3)@(3×1) which might use Tensor Cor
+8	7	HEAD	102.76	discard	Triton kernel with BLOCK_SIZE=1024, scalar loads at stride-3 offsets (base+0, base+1, base+2), compi
+9	8	HEAD	90.67	discard	Wrap mv()+copy_() in torch.compile(mode='max-autotune') to fuse GEMV+copy into a single kernel via i
+10	9	HEAD	90.41	discard	Use rgb.mul(weights).sum(-1) — fused elementwise multiply + channel reduction — to avoid cuBLAS GEMV
+11	10	HEAD	86.75	keep	Custom CUDA kernel: 512 threads/block (up from 256), __ldg reads + st.global.wt (write-through) stor
+12	11	HEAD	87.43	discard	Increase block size from 512 to 1024 threads/block to further saturate H100 SMs. All else same: __ld
+13	12	HEAD	86.90	discard	8 pixels/thread (6 float4 reads, 2 float4 writes) with 512 threads/block. More work per thread to hi
+14	13	HEAD	100.90	discard	Switch stores from st.global.wt (write-through) to st.global.wb (write-back, allocates in L2 cache).
+15	14	HEAD	100.93	discard	Use explicit ld.global.nc.v4 (non-coherent read-only/texture cache) instead of __ldg for reads, with
+16	15	HEAD	86.78	discard	Grid-stride loop with fixed 1056 blocks (132 SMs × 8 blocks/SM), 512 threads/block, __ldg reads, st.
+17	16	HEAD	86.16	keep	Add CUDA graph capture/replay around the best kernel (512 threads/block, __ldg reads, st.global.wt s
+18	17	HEAD	86.77	discard	Add L2 prefetch hints (prefetch.global.L2) for next block's data to hide memory latency, combined wi
+19	18	HEAD	83.33	keep	Combine CUDA graphs with cuBLAS GEMV (mv + copy_). mv() was 89.24us without graphs; with graph captu
+20	19	HEAD	86.60	discard	CUDA graphs + torch.mv with out=output.view(-1) to write directly into output buffer, eliminating in
+21	20	HEAD	86.01	discard	CUDA graphs + torch.mm (GEMM) with (3,1) weight matrix instead of mv (GEMV). Hypothesis: GEMM uses T
+22	21	HEAD	86.21	discard	CUDA graphs + mv + copy_ with allow_tf32=False to force full FP32 GEMV path. Hypothesis: disabling T
+23	22	HEAD	86.82	discard	CUDA graphs + torch.mm with (1,3) weight row @ (3,N) transposed rgb matrix. Hypothesis: column-major
+24	23	HEAD	86.91	discard	CUDA graphs + half-precision (fp16) mv: convert rgb to fp16, run HGEMV, convert result back to fp32.
+25	24	HEAD	88.94	discard	CUDA graphs + torch.addmv(out_flat, mat, vec, beta=0, alpha=1, out=out_flat) to write GEMV directly 
+26	25	HEAD	86.96	discard	CUDA graphs + mv + copy_ captured on a high-priority CUDA stream (priority=-1). Hypothesis: high-pri
