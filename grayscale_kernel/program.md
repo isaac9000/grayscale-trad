@@ -45,18 +45,25 @@ def custom_kernel(data) -> torch.Tensor:
     return output
 ```
 
-### Benchmark Shapes
+### Test Cases (correctness only)
 
 ```
-{"size": 512}    — image is 512×512×3
-{"size": 1024}   — image is 1024×1024×3
-{"size": 2048}   — image is 2048×2048×3
-{"size": 4096}   — image is 4096×4096×3
-{"size": 8192}   — image is 8192×8192×3
-{"size": 16384}  — image is 16384×16384×3
+{"size": 256,  "seed": 42}
+{"size": 512,  "seed": 123}
+{"size": 1024, "seed": 456}
+{"size": 2048, "seed": 789}
 ```
 
-The ranking criterion is the **geometric mean** of the benchmark times across all 6 sizes (lower is better).
+### Benchmark Cases (timing)
+
+```
+{"size": 1024, "seed": 1001}
+{"size": 2048, "seed": 1002}
+{"size": 4096, "seed": 1003}
+{"size": 8192, "seed": 1004}
+```
+
+The ranking criterion is the **geometric mean** of the mean latency across all 4 benchmark sizes (lower is better). The score is `3000 / geomean_us` (higher is better). Timing uses adaptive iteration: stops when `stderr/mean < 0.1%`, after 10 s per case, or after 120 s wall time (up to 100 reps).
 
 ### Speed-of-Light Intuition
 
@@ -88,7 +95,8 @@ You can use:
 ## Parsing results.json
 
 After each submission, read `results.json`. Look for:
-- **Success with time:** Look for `Geometric mean: ⏱ XX.X µs` — this is the key metric
+- **Success with time:** Look for `Geometric mean: ⏱ XX.X µs` — this is the key latency metric
+- **Score:** Look for `Score: X` — equals `3000 / geomean_us` (higher is better)
 - **Per-size times:** Look for individual size timings
 - **Test failure:** Look for `❌` and `Testing failed`
 - **Crash:** Look for `Running failed` and the traceback

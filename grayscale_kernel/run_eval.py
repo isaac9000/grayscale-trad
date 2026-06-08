@@ -18,8 +18,19 @@ import threading
 
 import modal
 
-BENCHMARK_SIZES = [512, 1024, 2048, 4096, 8192, 16384]
-TEST_SIZES = [512, 1024, 2048]
+TEST_CASES = [
+    {"size": 256,  "seed": 42},
+    {"size": 512,  "seed": 123},
+    {"size": 1024, "seed": 456},
+    {"size": 2048, "seed": 789},
+]
+
+BENCHMARK_CASES = [
+    {"size": 1024, "seed": 1001},
+    {"size": 2048, "seed": 1002},
+    {"size": 4096, "seed": 1003},
+    {"size": 8192, "seed": 1004},
+]
 
 
 def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
@@ -60,7 +71,8 @@ def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
     lines.append("```")
     for td in res.get("test_details", []):
         icon = "✅" if td["passed"] else "❌"
-        lines.append(f"{icon} size={td['size']}")
+        seed_info = f" seed={td['seed']}" if "seed" in td else ""
+        lines.append(f"{icon} size={td['size']}{seed_info}")
         if td.get("error"):
             lines.append(f"   ERROR: {td['error']}")
     lines.append("```")
@@ -71,11 +83,16 @@ def format_results_markdown(res: dict, mode: str = "leaderboard") -> str:
     bm = res.get("benchmark")
     if bm and mode == "leaderboard":
         geomean = bm["geomean_us"]
+        score = bm.get("score", "")
         lines += ["", "## Benchmarks:", "```", f"Geometric mean: ⏱ {geomean} µs", ""]
+        if score:
+            lines.append(f"Score: {score}")
+            lines.append("")
         for bd in res.get("benchmark_details", []):
+            seed_str = f" seed={bd['seed']}" if "seed" in bd else ""
             lines.append(
-                f"  size={bd['size']}: ⏱ {bd['mean_us']} ± {bd['stderr_us']} µs"
-                f"  ⚡ {bd['min_us']} µs  🐌 {bd['max_us']} µs"
+                f"  size={bd['size']}{seed_str}: ⏱ {bd['mean_us']} ± {bd['err_us']} µs"
+                f"  (runs={bd.get('runs', '?')})"
             )
         lines.append("```")
 
@@ -111,10 +128,7 @@ def main():
 
     def _call():
         try:
-            if args.mode == "test":
-                result_holder[0] = evaluate_kernel.remote(kernel_code, warmup_iters=0, eval_iters=0)
-            else:
-                result_holder[0] = evaluate_kernel.remote(kernel_code)
+            result_holder[0] = evaluate_kernel.remote(kernel_code, mode=args.mode)
         except Exception as e:
             error_holder[0] = e
 
