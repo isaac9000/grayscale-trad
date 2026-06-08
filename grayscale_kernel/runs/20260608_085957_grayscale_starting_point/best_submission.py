@@ -39,13 +39,16 @@ void rgb2gray(torch::Tensor rgb, torch::Tensor output) {
     int N4 = N / 4;
     auto stream = at::cuda::getCurrentCUDAStream();
 
-    // Set L2 cache persistence for input (full L2, scaled hitRatio)
+    // Set L2 cache persistence for input + streaming hint for output
     size_t input_bytes = (size_t)N * 3 * sizeof(float);
+    size_t output_bytes = (size_t)N * sizeof(float);
     int l2_size_int = 0;
     cudaDeviceGetAttribute(&l2_size_int, cudaDevAttrL2CacheSize, 0);
     size_t l2_size = (size_t)l2_size_int;
 
+    // Use full L2 for input (capped at actual L2 size)
     size_t persist_bytes = min(input_bytes, l2_size);
+    // hitRatio: if data fits in L2, use 1.0; else proportion that fits
     float hit_ratio = (input_bytes <= l2_size) ? 1.0f : (float)l2_size / (float)input_bytes;
 
     cudaStreamAttrValue attr;
@@ -55,10 +58,6 @@ void rgb2gray(torch::Tensor rgb, torch::Tensor output) {
     attr.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
     attr.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
     cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow, &attr);
-
-    // Maximize L1 cache by setting shared memory carveout to minimum
-    cudaFuncSetAttribute(rgb2gray_vec4_kernel,
-        cudaFuncAttributePreferredSharedMemoryCarveout, 0);
 
     int threads = 1024;
     int blocks = (N4 + threads - 1) / threads;
@@ -80,7 +79,7 @@ void rgb2gray(torch::Tensor rgb, torch::Tensor output);
 """
 
 _mod = load_inline(
-    name="rgb2gray_l2_l1max",
+    name="rgb2gray_l2full",
     cpp_sources=_cpp_src,
     cuda_sources=_cuda_src,
     functions=["rgb2gray"],
